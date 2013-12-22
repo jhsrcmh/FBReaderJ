@@ -147,7 +147,6 @@ public class FBReaderYotaService extends BSActivity {
 	private void initBookView(final boolean refresh) {
 		myCollection.bindToService(this, new Runnable() {
 			public void run() {
-				new Exception("INIT BOOK SCREEN " + this + "::" + Widget).printStackTrace();
 				if (myBitmap == null) {
 					myBitmap = Bitmap.createBitmap(
 						BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888
