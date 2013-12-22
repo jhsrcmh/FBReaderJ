@@ -28,6 +28,9 @@ import org.geometerplus.zlibrary.ui.android.view.ZLAndroidWidget;
 
 import org.geometerplus.fbreader.book.*;
 import org.geometerplus.fbreader.fbreader.ActionCode;
+import org.geometerplus.fbreader.fbreader.FBReaderApp;
+
+import org.geometerplus.android.fbreader.libraryService.BookCollectionShadow;
 
 /**
  * @author ASazonov
@@ -35,27 +38,32 @@ import org.geometerplus.fbreader.fbreader.ActionCode;
 public class FBReaderYotaService extends BSActivity {
 	public static final String KEY_BACK_SCREEN_IS_ACTIVE =
 		"com.yotadevices.fbreader.backScreenIsActive";
-	public static final String KEY_CURRENT_BOOK =
-		"com.yotadevices.fbreader.currentBook";
+
+	private final BookCollectionShadow myCollection = new BookCollectionShadow();
 
 	public static ZLAndroidWidget Widget;
 	private Canvas myCanvas;
 	private Bitmap myBitmap;
 
 	private volatile boolean myBackScreenIsActive;
-	private Book myCurrentBook;
-
-	@Override
-	public void onBSResume() {
-		super.onBSResume();
-		initBookView();
-		getBSDrawer().drawBitmap(0, 0, myBitmap, BSDrawer.Waveform.WAVEFORM_GC_FULL);
-	}
 
 	@Override
 	public void onBSCreate() {
 		super.onBSCreate();
-		initBookView();
+		initBookView(false);
+	}
+
+	@Override
+	public void onBSResume() {
+		super.onBSResume();
+		initBookView(true);
+	}
+
+	@Override
+	public void onBSDestroy() {
+		Widget = null;
+		myCollection.unbind();
+		super.onBSDestroy();
 	}
 
 	private class YotaBackScreenWidget extends ZLAndroidWidget {
@@ -69,33 +77,34 @@ public class FBReaderYotaService extends BSActivity {
 
 		@Override
 		public void repaint() {
-			Widget.draw(myCanvas);
+			draw(myCanvas);
 			getBSDrawer().drawBitmap(0, 0, myBitmap, BSDrawer.Waveform.WAVEFORM_GC_FULL);
 		}
 
 		@Override
-		protected void onDraw(final Canvas canvas) {
+		protected void onDraw(Canvas canvas) {
 			if (myBackScreenIsActive) {
 				super.onDraw(canvas);
 			} else {
+				final Book currentBook = myCollection.getRecentBook(0);
 				if (myLastPaintWasActive == null ||
 					myLastPaintWasActive ||
-					!MiscUtil.equals(myCurrentBook, myLastBook)) {
-					drawCover(canvas);
+					!MiscUtil.equals(currentBook, myLastBook)) {
+					drawCover(canvas, currentBook);
 				}
+				myLastBook = currentBook;
 			}
 			myLastPaintWasActive = myBackScreenIsActive;
-			myLastBook = myCurrentBook;
 		}
 
-		private void drawCover(final Canvas canvas) {
+		private void drawCover(Canvas canvas, Book currentBook) {
 			final Paint paint = new Paint();
 			paint.setColor(0xFFFFFFFF);
 			canvas.drawRect(0, 0, BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT, paint);
 
 			Bitmap coverBitmap = null;
-			if (myCurrentBook != null) {
-				final ZLImage image = BookUtil.getCover(myCurrentBook);
+			if (currentBook != null) {
+				final ZLImage image = BookUtil.getCover(currentBook);
 
 				if (image != null) {
 					if (image instanceof ZLLoadableImage) {
@@ -135,17 +144,31 @@ public class FBReaderYotaService extends BSActivity {
 		}
 	}
 
-	private void initBookView() {
-		myBitmap = Bitmap.createBitmap(BSDrawer.SCREEN_WIDTH,
-				BSDrawer.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888);
-		myCanvas = new Canvas(myBitmap);
-		Widget = new YotaBackScreenWidget(getApplicationContext());
-		Widget.setLayoutParams(
-			new FrameLayout.LayoutParams(BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT)
-		);
-		Widget.measure(BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT);
-		Widget.layout(0, 0, BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT);
-		Widget.draw(myCanvas);
+	private void initBookView(final boolean refresh) {
+		myCollection.bindToService(this, new Runnable() {
+			public void run() {
+				new Exception("INIT BOOK SCREEN " + this + "::" + Widget).printStackTrace();
+				if (myBitmap == null) {
+					myBitmap = Bitmap.createBitmap(
+						BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888
+					);
+					myCanvas = new Canvas(myBitmap);
+				}
+				if (Widget == null) {
+					Widget = new YotaBackScreenWidget(getApplicationContext());
+				}
+				Widget.setLayoutParams(
+					new FrameLayout.LayoutParams(BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT)
+				);
+				Widget.measure(BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT);
+				Widget.layout(0, 0, BSDrawer.SCREEN_WIDTH, BSDrawer.SCREEN_HEIGHT);
+				Widget.draw(myCanvas);
+
+				if (refresh) {
+					getBSDrawer().drawBitmap(0, 0, myBitmap, BSDrawer.Waveform.WAVEFORM_GC_FULL);
+				}
+			}
+		});
 	}
 
 	@Override
@@ -176,25 +199,20 @@ public class FBReaderYotaService extends BSActivity {
 	protected void onHandleIntent(Intent intent) {
 		if (intent.hasExtra(KEY_BACK_SCREEN_IS_ACTIVE)) {
 			myBackScreenIsActive = intent.getBooleanExtra(KEY_BACK_SCREEN_IS_ACTIVE, false);
-		}
-		if (intent.hasExtra(KEY_CURRENT_BOOK)) {
-			myCurrentBook = SerializerUtil.deserializeBook(intent.getStringExtra(KEY_CURRENT_BOOK));
+		} else {
+			final FBReaderApp app = (FBReaderApp)FBReaderApp.Instance();
+			if (app != null) {
+				myBackScreenIsActive = app.YotaDrawOnBackScreenOption.getValue();
+			}
 		}
 
-		initBookView();
-		getBSDrawer().drawBitmap(0, 0, myBitmap, BSDrawer.Waveform.WAVEFORM_GC_FULL);
+		initBookView(true);
 		setYotaGesturesEnabled(myBackScreenIsActive);
 	}
 
 	@Override
 	public void onBSTouchEvent(BSMotionEvent event) {
 		handleGesture(event.getBSAction());
-	}
-
-	@Override
-	public void onBSDestroy() {
-		Widget = null;
-		super.onBSDestroy();
 	}
 
 	public void setYotaGesturesEnabled(boolean enabled) {
